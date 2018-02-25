@@ -54,6 +54,29 @@ def train(epoch):
           'time: {:.4f}s'.format(time.time() - t))
 
 
+def get_index ( grad,w_v ) :
+    # change all grad to 0 with adj matrix element = 1
+    # in adj matrix change 0 to 1 and 1 to 0
+    adj_rev = 1 - torch.ge(w_v, 0.5) 
+    adj_rev = adj_rev.float().cuda()
+    grad = grad * adj_rev 
+    # get index of max element in tensor
+    val_col, ind_col = torch.max(grad, 1)
+    val_row, ind_row = torch.max(val_col,0)
+    max_row = ind_row
+    max_col = ind_col[ind_row]
+    return max_row, max_col
+
+def change_adj (max_row,max_col,w_v):
+    # change the largest vaule to 1
+    a = np.zeros ((w_v.size()[0], w_v.size()[1]))
+    a[max_row][max_col] = 1
+    a = torch.from_numpy(a)
+    a = a.float().cuda()
+    w_v = w_v + a
+    return w_v
+          
+
 def attack_cw(feat_v,input_v, label_v, net, c, untarget=True, n_class=7):
 
     net.eval()
@@ -117,11 +140,11 @@ def attack_cw(feat_v,input_v, label_v, net, c, untarget=True, n_class=7):
 
         error.backward()
         print error 
-        optimizer.step()
+        #optimizer.step()
         print w_v.grad
         # get the biggest grad then change to 1
-
-
+        ind_i, ind_j = get_index(w_v_grad, w_v)
+        w_v = change_adj(ind_i, ind_j, w_v)
     return adverse_v, diff
 
 def acc_under_attack(feat_v,input_v,label_v, net, c, attack_f):
