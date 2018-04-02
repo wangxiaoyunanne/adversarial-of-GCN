@@ -1,3 +1,4 @@
+# attack feature matrix by dropping element 
 import sys
 
 import argparse
@@ -90,16 +91,21 @@ def get_index ( grad,w_v ) :
     adj_ge = torch.ge(w_v, 0.0001)  
     adj_ge = adj_ge.float().cuda()
     #print torch.diag(adj_ge)
-    adj_rev = 1.0 - adj_ge 
-    adj_rev = adj_rev.float().cuda()
-    grad = grad * adj_rev 
+    #adj_rev = 1.0 - adj_ge 
+    #adj_rev = adj_rev.float().cuda()
+   # print grad
+   # print adj_ge
+
+    #grad = grad * adj_ge
+    grad = grad * w_v    
     # get index of max element in tensor
-    val_col, ind_col = torch.min(grad, 1)
-    val_row, ind_row = torch.min(val_col,0)
+    val_col, ind_col = torch.max(grad, 1)
+    val_row, ind_row = torch.max(val_col,0)
     max_row = ind_row.data
     max_col = ind_col[ind_row].data
+    print max_row, max_col
     #print "row and col " + str(max_row)  + str(max_col)
-    return max_row, max_col
+    return max_row[0], max_col[0]
 
 def get_index_random (grad,w_v):
     row, col = np.random.randint(w_v.size()[0],size = 2)
@@ -109,16 +115,20 @@ def add_edge (row, col, w_v):
     a = np.zeros ((w_v.size()[0], w_v.size()[1]))
     ind_nonz = torch.nonzero (w_v[row]) 
     dim = ind_nonz.size()[0]
-    #print "dim " + str(dim) 
-    for j in range(dim):
-        ind_col = ind_nonz[j].data
-        a [row, ind_col] = 1.0/(dim+1) - 1.0/dim
+    print "dim " + str(dim)
+    if dim == 1 :
+        a [row, col] = 1.0/dim  
+    else :
+        for j in range(dim):
+            ind_col = ind_nonz[j].data
+            #print w_v[row , ind_col]
+            a [row, ind_col] = 1.0/dim - 1.0/(dim-1)
 
-    a[row,col] = 1.0/(dim+1)
+        a[row,col] = 1.0/dim
     
     a = torch.from_numpy(a)
     a = Variable (a.float().cuda())
-    #print (dim ,torch.sum(a))
+   # print (dim ,torch.sum(a))
     return a 
 
           
@@ -126,7 +136,7 @@ def add_edge (row, col, w_v):
 def attack_cw(feat_v,input_v, label_v, net, c, untarget=True, n_class=7):
 
     net.eval()
-
+    
     index = label_v.data.cpu().view(-1, 1)
 
     label_onehot = torch.FloatTensor(input_v.size()[0], n_class)
@@ -137,24 +147,27 @@ def attack_cw(feat_v,input_v, label_v, net, c, untarget=True, n_class=7):
 
     label_onehot_v = Variable(label_onehot, requires_grad = False).cuda()
    # print (label_onehot_v.data)
-    w = input_v.data.clone()
+    w = feat_v.data.clone()
     w_v = Variable(w.cuda(), requires_grad=True)
-       
+    #print w_v[2][3]
+     
     #optimizer = optim.Adam([w_v], lr=1.0e-3)
 
     zero_v = Variable(torch.FloatTensor([0]).cuda(), requires_grad=False)
     num_edges = 0.0
+    row_mod = []
+
     for _ in range(100):
 
         net.zero_grad()
-        num_edges += 1
+        num_edges += 1.0
         #optimizer.zero_grad()
         
         #adverse_v = 0.5 * (torch.tanh(w_v) + 1.0)
         adverse_v = w_v
-        diff = adverse_v - input_v
+        diff = adverse_v - feat_v
         #print torch.sum((diff))
-        output = net(feat_v,adverse_v)
+        output = net(adverse_v, input_v)
         output1 = F.log_softmax(output, dim =1)
         loss_test = F.nll_loss(output1[idx_test], labels[idx_test])
         acc_test = accuracy(output1[idx_test], labels[idx_test])
@@ -166,7 +179,7 @@ def attack_cw(feat_v,input_v, label_v, net, c, untarget=True, n_class=7):
         other = (torch.max(torch.mul(output, (1-label_onehot_v))-label_onehot_v*10000,1)[0])
         
         #error = torch.sum(diff * diff)
-        error = 0
+        error = num_edge:
         #print 'error 1' + str(error)
         if untarget:
 
@@ -189,9 +202,13 @@ def attack_cw(feat_v,input_v, label_v, net, c, untarget=True, n_class=7):
         #a = torch.from_numpy(a)
         #a = Variable (a.float().cuda()) 
         a = add_edge (ind_i, ind_j, w_v)
-        b = add_edge (ind_j, ind_i, w_v)  
-        w_v.data  += a.data
-        w_v.data += b.data
+        row_mod.append (ind_i)
+        #b = add_edge (ind_j, ind_i, w_v) 
+        print w_v[ind_i, ind_j] 
+        w_v.data  -= a.data
+        #w_v.data += b.data
+        print w_v[ind_i][ind_j]
+    print len(set(row_mod))
 
     return adverse_v, diff
 
@@ -215,7 +232,7 @@ def acc_under_attack(feat_v,input_v,label_v, net, c, attack_f):
 
     else:
 
-        adverse_v = input_v
+        adverse_v = feat_v
 
         diff = Variable(torch.FloatTensor([0]))
 
@@ -225,7 +242,7 @@ def acc_under_attack(feat_v,input_v,label_v, net, c, attack_f):
 
     adverse_v = Variable(adverse_v.data, volatile=True)
 
-    _, idx = torch.max(net(feat_v,adverse_v), 1)
+    _, idx = torch.max(net(adverse_v, input_v), 1)
 
     correct += torch.sum(label_v.eq(idx)).data[0]
 
